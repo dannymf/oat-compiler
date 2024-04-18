@@ -1,0 +1,44 @@
+(library
+ (name oat)
+ (modules driver backend frontend lexer parser ast astlib typechecker tctxt datastructures liveness cfg solver registers opt alias dce constprop escape)
+ (libraries str num util x86 ll))
+
+(ocamllex lexer)
+(menhir (modules parser))
+
+(env
+ (dev
+  (flags
+   (:standard -g -w "+a-4-7-9-26-27-29-30-32..42-44-45-48-50-60-66..70")
+   ))) 
+
+(executable
+ (public_name main)
+ (name main)
+ (modules main)
+ (promote (until-clean))
+ (libraries
+; OCaml standard libraries  
+; project libraries
+  str
+  num
+  util
+  x86
+  ll
+  studenttests
+  gradedtests))
+
+(executable
+ (public_name printanalysis)
+ (name printanalysis)
+ (modules printanalysis)
+ (promote (until-clean))
+ (libraries
+  oat
+; OCaml standard libraries  
+; project libraries
+  str
+  num
+  util
+  x86
+  ll))

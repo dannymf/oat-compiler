@@ -1,0 +1,16 @@
+int floorlog (int x, int base) {
+  var i = 0;
+  var curr = base;
+  while (curr < x) {
+    curr = curr * base;
+    i = i + 1;
+  }
+  return i;
+}
+
+
+int program (int argc, string[] argv) {
+  var x = 66902;
+  var base = 8;
+  return floorlog(x, base);
+}

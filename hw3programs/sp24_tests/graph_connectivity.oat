@@ -1,0 +1,94 @@
+bool[] create_graph(int n)
+{
+  return new bool[n*n];
+}
+
+int id(int n, int i, int j) {
+  return n * i + j;
+}
+
+void connect(bool[] graph, int n, int v1, int v2) {
+  if (v1 < n & v2 < n) {
+    graph[id(n,v1,v2)] = true;
+    graph[id(n,v2,v1)] = true;
+  }
+  return;
+}
+
+bool is_adjacent(bool[] graph, int n, int v1, int v2) {
+  return (v1 < n & v2 < n & graph[id(n,v1,v2)]);
+}
+
+
+/* only supports single digit for simplicity */
+int int_of_string(string s) {
+  if (length_of_string(s) > 1) {
+    print_string("string provided to int_of_string is too long. the string was:\n\n\"");
+    print_string(s);
+    print_string("\"\n\n");
+  }
+  return (array_of_string(s))[0] - char("0");
+}
+
+int char(string s) {
+  return (array_of_string(s))[0];
+}
+
+string sprint_graph(bool[] graph, int n) {
+  var s = new int[n * (n+1)];
+  for (var i = 0; i < n; i = i + 1;) {
+    for (var j = 0; j < n; j = j + 1;) {
+      var gid = id(n,i,j);
+      var sid = id(n+1,i,j);
+      s[sid] = char("0");
+      if (graph[gid]) { s[sid] = s[sid] + 1; }
+    }
+    s[id(n+1,i,n)] = char("\n");
+  }
+  return string_of_array(s);
+}
+
+/* checks connectivity in an undirected graph */
+void visit(bool[] graph, int n, bool[] visited, int v) {
+  if (visited[v]) {
+    return;
+  }
+  visited[v] = true;
+  for (var w = 0; w < n; w = w + 1;) {
+    if (is_adjacent(graph,n,v,w)) { visit(graph, n, visited, w); }
+  }
+  return;
+}
+
+bool is_connected(bool[] graph, int n) {
+  var visited = new bool[n];
+  visit(graph, n, visited, 0);
+  for (var v = 0; v < n; v = v + 1;) {
+    if (!visited[v]) { return false; }
+  }
+  return true;
+}
+
+int program (int argc, string[] argv) {
+  if (argc == 0) {
+    print_string("expected at least 1 argument!\n");
+    return 1;
+  }
+
+  var n = int_of_string(argv[1]);
+  var graph = create_graph(n);
+  for (var i = 2; i < argc; i = i + 2;) {
+    if (i + 1 == argc) { print_string("expected an odd number of arguments.\n"); }
+    connect(graph, n, int_of_string(argv[i]), int_of_string(argv[i+1]));
+  }
+
+  print_string(sprint_graph(graph, n));
+  print_string("connected: ");
+  if (is_connected(graph, n)) {
+    print_string("true");
+  } else {
+    print_string("false");
+  }
+
+  return 0;
+}

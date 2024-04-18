@@ -1,0 +1,43 @@
+
+int program (int argc, string[] argv) {
+
+	var clocks = new int[][]{ new int[]{0, 0, 0}, new int[]{0, 0, 0}, new int[]{0, 0, 0} };
+	var num_clocks = 3;
+
+	/* event_send[i] corresponds with event_recieve[i] */
+	/* if the values are equal, that means a regular event happened on that process */
+	var event_send = new int[]{0, 1, 2, 0};
+	var event_receive = new int[]{0, 1, 2, 1};
+	var num_events = 4;
+
+	for (var i = 0; i < num_events; i = i+1;) {
+		if (event_send[i] == event_receive[i]) {
+			clocks[event_send[i]][event_receive[i]] = clocks[event_send[i]][event_receive[i]] + 1;
+		}
+		else {
+			clocks[event_send[i]][event_send[i]] = clocks[event_send[i]][event_send[i]] + 1;
+			for (var j = 0; j < num_clocks; j = j+1;) {
+				if (clocks[event_receive[i]][j] < clocks[event_send[i]][j]) {
+					clocks[event_receive[i]][j] = clocks[event_send[i]][j];
+				}
+			}
+			clocks[event_receive[i]][event_receive[i]] = clocks[event_receive[i]][event_receive[i]] + 1;
+		}
+	}
+
+	var soln_clocks = new int[][]{ new int[]{2, 0, 0}, new int[]{2, 2, 0}, new int[]{0, 0, 1} };
+	var correct = true;
+	for (var i = 0; i < num_clocks; i = i+1;) {
+		for (var j = 0; j < num_clocks; j = j+1;) {
+			if (clocks[i][j] != soln_clocks[i][j]) {
+				correct = false;
+			}
+		}
+	}
+	if (correct) {
+		return 1;
+	}
+	else {
+		return 0;
+	}
+}

@@ -1,0 +1,44 @@
+void sink_island(int row, int col, int rows, int cols, int[][] grid_param) {
+    if (row < 0 | row >= rows | col < 0 | col >= cols) {
+        return;
+    }
+
+    if (grid_param[row][col] == 0) {
+        return;
+    }
+
+    grid_param[row][col] = 0;
+
+    sink_island(row, col + 1, rows, cols, grid_param);
+    sink_island(row, col - 1, rows, cols, grid_param);
+    sink_island(row + 1, col, rows, cols, grid_param);
+    sink_island(row - 1, col, rows, cols, grid_param);
+
+    return;
+}
+
+int program(int argc, string[] argv) {
+  var island_count = 0;
+
+  var grid = new int[][]{new int[]{1, 1, 1, 1, 1, 1, 1, 1},
+                         new int[]{0, 0, 0, 0, 0, 0, 0, 0},
+                         new int[]{0, 0, 1, 0, 0, 0, 0, 0},
+                         new int[]{1, 0, 1, 0, 0, 0, 0, 0},
+                         new int[]{0, 0, 1, 0, 1, 1, 0, 0},
+                         new int[]{1, 0, 1, 0, 1, 1, 0, 0},
+                         new int[]{0, 0, 1, 0, 0, 0, 1, 1},
+                         new int[]{1, 0, 1, 0, 0, 0, 1, 1}};
+  var num_rows = 8;
+  var num_cols = 8;
+
+  for(var i = 0; i < num_rows; i=i+1;) {
+    for(var j = 0; j < num_cols; j=j+1;) {
+        if (grid[i][j] == 1) {
+            sink_island(i, j, num_rows, num_cols, grid);
+            island_count = island_count + 1;
+        }
+    }
+  }
+
+  return island_count;  
+}

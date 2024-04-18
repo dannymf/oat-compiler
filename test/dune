@@ -1,0 +1,15 @@
+(env
+ (dev
+  (flags
+   (:standard -g -w "+a-4-7-9-26-27-29-30-32..42-44-45-48-50-60-66..70")
+   ))) 
+
+(library
+  (name studenttests)
+  (modules studenttests)
+  (libraries util x86 ll oat))
+
+(library
+ (name gradedtests)
+ (modules gradedtests analysistests)
+ (libraries util x86 ll oat))

@@ -1,0 +1,7 @@
+(library
+  (name ll)
+  (modules ll llutil lllexer llparser llinterp)
+  (wrapped false))
+
+(ocamllex lllexer)
+(menhir (modules llparser))

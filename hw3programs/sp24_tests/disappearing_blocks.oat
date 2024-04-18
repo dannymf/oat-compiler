@@ -1,0 +1,14 @@
+int fun1 (int y) {
+    while (y != 7) {
+        y = y - 1;
+        return y;
+    }
+    return 0;
+}
+
+int program () {
+    if (true) {
+        return fun1(100);
+    }
+    return 0;
+}

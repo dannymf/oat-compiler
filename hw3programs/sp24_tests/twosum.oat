@@ -1,0 +1,61 @@
+/* references this website https://www.geeksforgeeks.org/check-if-pair-with-given-sum-exists-in-array/ */
+/* given a sorted list, determines if any two numbers sum to the target */
+
+bool two_sum (int[] ls, int target, int arrsize) {
+  var left = 0;
+  var right = arrsize-1;
+
+  while (left < right) {
+    var currsum = ls[left] + ls[right];
+    if (currsum == target) {
+      return true;
+    }
+    else {
+      if (currsum < target) {
+        left = left + 1;
+      }
+      else {
+        right = right - 1;
+      }
+    }
+  }
+
+  return false;
+
+}
+
+bool two_sum_naive (int[] input, int target, int arrlen) {
+  for (var i = 0; i < arrlen; i = (i+1);)
+  {
+    for (var j = (i+1); j < arrlen; j = (j+1);)
+    {
+      var test_sum = input[i] + input[j];
+      if (test_sum == target) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+int program (int argc, string[] argv) {
+
+  var a1 = new int[]{-3, -1, 0, 1, 2};
+  var a2 = new int[]{-2, 0, 1, 1, 5};
+  var a3 = new int[]{-10, -4, -3, -1, 0, 1, 4, 7, 13, 14};
+
+  var sum1 = two_sum (a1, 2, 5);
+  var sum2 = two_sum (a2, 0, 5);
+  var sum3 = two_sum (a3, 4, 10);
+
+  if (sum1 & !sum2 & sum3) {
+    var sum1check = two_sum_naive(a1, 2, 5);
+    var sum2check = two_sum_naive(a2, 0, 5);
+    var sum3check = two_sum_naive(a3, 4, 10);
+    if (sum1check & !sum2check & sum3check) {
+      print_string("Correct!");
+    }
+  }
+
+  return 0;
+}
