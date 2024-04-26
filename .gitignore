@@ -7,3 +7,4 @@ printanalysis
 ocamlbin
 *~
 output
+.devcontainer/ocaml-platform.vsix

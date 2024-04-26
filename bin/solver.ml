@@ -1,11 +1,11 @@
 open Datastructures
 
 (* dataflow analysis graph signature ---------------------------------------- *)
-(* Interface for dataflow graphs structured in a way to facilitate 
-   the general iterative dataflow analysis algorithm.                         
+(* Interface for dataflow graphs structured in a way to facilitate
+   the general iterative dataflow analysis algorithm.
 
    The AsGraph functor in cfg.ml provides an implementation of this
-   DFA_GRAPH signature that converts an LL IR control-flow graph to 
+   DFA_GRAPH signature that converts an LL IR control-flow graph to
    this representation.
 
    NOTE: The direction of the analysis is goverened by how preds and
@@ -16,81 +16,93 @@ open Datastructures
 
    This means that for a node n, the output information is explicitly
    represented by the "Graph.out" function:
-     out[n] = Graph.out g n
+   out[n] = Graph.out g n
    The input information for [n] is implicitly represented by:
-     in[n] = combine preds[n] (out[n])
-
+   in[n] = combine preds[n] (out[n])
 *)
-module type DFA_GRAPH =
-  sig
-    module NodeS : SetS
+module type DFA_GRAPH = sig
+  module NodeS : SetS
 
-    (* type of nodes in this graph *)
-    type node = NodeS.elt
+  (* type of nodes in this graph *)
+  type node = NodeS.elt
 
-    (* dataflow facts associated with the out-edges of the nodes in the graph *)
-    type fact
+  (* dataflow facts associated with the out-edges of the nodes in the graph *)
+  type fact
 
-    (* the abstract type of dataflow graphs *)
-    type t
-    val preds : t -> node -> NodeS.t
-    val succs : t -> node -> NodeS.t
-    val nodes : t -> NodeS.t
+  (* the abstract type of dataflow graphs *)
+  type t
 
-    (* the flow function:
-       given a graph node and input fact, compute the resulting fact on the 
-       output edge of the node                                                
-    *)
-    val flow : t -> node -> fact -> fact
+  val preds : t -> node -> NodeS.t
+  val succs : t -> node -> NodeS.t
+  val nodes : t -> NodeS.t
 
-    (* lookup / modify the dataflow annotations associated with a node *)    
-    val out : t -> node -> fact
-    val add_fact : node -> fact -> t -> t
+  (* the flow function:
+     given a graph node and input fact, compute the resulting fact on the
+     output edge of the node
+  *)
+  val flow : t -> node -> fact -> fact
 
-    (* printing *)
-(*
-    val to_string : t -> string
-    val printer : Format.formatter -> t -> unit
- *)
-  end
+  (* lookup / modify the dataflow annotations associated with a node *)
+  val out : t -> node -> fact
+  val add_fact : node -> fact -> t -> t
+
+  (* printing *)
+  (*
+     val to_string : t -> string
+     val printer : Format.formatter -> t -> unit
+  *)
+end
 
 (* abstract domain signature ------------------------------------------------ *)
 (* The general algorithm works over a generic abstract domain of "facts".
-    - facts can be combined (this is the 'join' operation)
-    - facts can be compared                                                   *)
-module type FACT =
-  sig
-    type t
-    val combine : t list -> t
-    val compare : t -> t -> int
-    val to_string : t -> string
-  end
+   - facts can be combined (this is the 'join' operation)
+   - facts can be compared *)
+module type FACT = sig
+  type t
 
+  val combine : t list -> t
+  val compare : t -> t -> int
+  val to_string : t -> string
+end
 
 (* generic iterative dataflow solver ---------------------------------------- *)
 (* This functor takes two modules:
-      Fact  - the implementation of the abstract domain
-      Graph - the dataflow anlaysis graph
+   Fact  - the implementation of the abstract domain
+   Graph - the dataflow anlaysis graph
 
-   It produces a module that has a single function 'solve', which 
+   It produces a module that has a single function 'solve', which
    implements the iterative dataflow analysis described in lecture.
-      - using a worklist (or workset) nodes 
-        [initialized with the set of all nodes]
+   - using a worklist (or workset) nodes
+     [initialized with the set of all nodes]
 
-      - process the worklist until empty:
-          . choose a node from the worklist
-          . find the node's predecessors and combine their flow facts
-          . apply the flow function to the combined input to find the new
-            output
-          . if the output has changed, update the graph and add the node's
-            successors to the worklist                                        
+   - process the worklist until empty:
+     . choose a node from the worklist
+     . find the node's predecessors and combine their flow facts
+     . apply the flow function to the combined input to find the new
+     output
+     . if the output has changed, update the graph and add the node's
+     successors to the worklist
 
    TASK: complete the [solve] function, which implements the above algorithm.
 *)
-module Make (Fact : FACT) (Graph : DFA_GRAPH with type fact := Fact.t) =
-  struct
-
-    let solve (g:Graph.t) : Graph.t =
-      failwith "TODO: Solver.solve unimplemented"
-  end
-
+module Make (Fact : FACT) (Graph : DFA_GRAPH with type fact := Fact.t) = struct
+  let solve (g : Graph.t) : Graph.t =
+    let rec pick g' worklist =
+      match worklist with
+      | [] -> g'
+      | hd :: tl ->
+        let preds = Graph.preds g' hd in
+        let old = Graph.out g' hd in
+        let new_out =
+          Graph.flow g' hd
+          @@ Fact.combine
+          @@ List.map (fun node -> Graph.out g' node) (Graph.NodeS.elements preds)
+        in
+        let g'' = Graph.add_fact hd new_out g' in
+        if Fact.compare old new_out != 0
+        then pick g'' (tl @ Graph.NodeS.elements @@ Graph.succs g' hd)
+        else pick g'' tl
+    in
+    pick g (Graph.NodeS.elements @@ Graph.nodes g)
+  ;;
+end
