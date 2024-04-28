@@ -58,68 +58,43 @@ let eval_cnd cnd a b =
   | Sge -> wrap (Int64.compare a b >= 0)
 ;;
 
+let eval_op u eval oper op1 op2 d =
+  match op1, op2 with
+  | Const a, Const b -> UidM.add u (SymConst.Const (eval oper a b)) d
+  | Const a, Id id2 ->
+    let open SymConst in
+    (try
+       match UidM.find id2 d with
+       | Const b -> UidM.add u (Const (eval oper a b)) d
+       | UndefConst -> UidM.add u UndefConst d
+       | NonConst -> UidM.add u NonConst d
+     with
+     | Not_found -> UidM.add u UndefConst d)
+  | Id id1, Const b ->
+    let open SymConst in
+    (try
+       match UidM.find id1 d with
+       | Const a -> UidM.add u (Const (eval oper a b)) d
+       | UndefConst -> UidM.add u UndefConst d
+       | NonConst -> UidM.add u NonConst d
+     with
+     | Not_found -> UidM.add u UndefConst d)
+  | Id id1, Id id2 ->
+    let open SymConst in
+    (try
+       match UidM.find id1 d, UidM.find id2 d with
+       | Const a, Const b -> UidM.add u (Const (eval oper a b)) d
+       | UndefConst, _ | _, UndefConst -> UidM.add u UndefConst d
+       | NonConst, _ | _, NonConst -> UidM.add u NonConst d
+     with
+     | Not_found -> UidM.add u UndefConst d)
+  | _ -> failwith "non id/const operands"
+;;
+
 let insn_flow ((u, i) : uid * insn) (d : fact) : fact =
   match i with
-  | Binop (bop, _, op1, op2) ->
-    (match op1, op2 with
-     | Const a, Const b -> UidM.add u (SymConst.Const (eval_bop bop a b)) d
-     | Const a, Id id2 ->
-       (try
-          match UidM.find id2 d with
-          | SymConst.Const b -> UidM.add u (SymConst.Const (eval_bop bop a b)) d
-          | SymConst.UndefConst -> UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | Id id1, Const b ->
-       (try
-          match UidM.find id1 d with
-          | SymConst.Const a -> UidM.add u (SymConst.Const (eval_bop bop a b)) d
-          | SymConst.UndefConst -> UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | Id id1, Id id2 ->
-       (try
-          match UidM.find id1 d, UidM.find id2 d with
-          | SymConst.Const a, SymConst.Const b ->
-            UidM.add u (SymConst.Const (eval_bop bop a b)) d
-          | SymConst.UndefConst, _ | _, SymConst.UndefConst ->
-            UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst, _ | _, SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | _ -> failwith "non id/const operands")
-  | Icmp (cnd, _, op1, op2) ->
-    (match op1, op2 with
-     | Const a, Const b -> UidM.add u (SymConst.Const (eval_cnd cnd a b)) d
-     | Const a, Id id2 ->
-       (try
-          match UidM.find id2 d with
-          | SymConst.Const b -> UidM.add u (SymConst.Const (eval_cnd cnd a b)) d
-          | SymConst.UndefConst -> UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | Id id1, Const b ->
-       (try
-          match UidM.find id1 d with
-          | SymConst.Const a -> UidM.add u (SymConst.Const (eval_cnd cnd a b)) d
-          | SymConst.UndefConst -> UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | Id id1, Id id2 ->
-       (try
-          match UidM.find id1 d, UidM.find id2 d with
-          | SymConst.Const a, SymConst.Const b ->
-            UidM.add u (SymConst.Const (eval_cnd cnd a b)) d
-          | SymConst.UndefConst, _ | _, SymConst.UndefConst ->
-            UidM.add u SymConst.UndefConst d
-          | SymConst.NonConst, _ | _, SymConst.NonConst -> UidM.add u SymConst.NonConst d
-        with
-        | Not_found -> UidM.add u SymConst.UndefConst d)
-     | _ -> failwith "non id/const operands")
+  | Binop (bop, _, op1, op2) -> eval_op u eval_bop bop op1 op2 d
+  | Icmp (cnd, _, op1, op2) -> eval_op u eval_cnd cnd op1 op2 d
   | Store _ | Call (Void, _, _) -> UidM.add u SymConst.UndefConst d
   | _ -> UidM.add u SymConst.NonConst d
 ;;
@@ -146,11 +121,12 @@ module Fact = struct
      flow into a node. You may find the UidM.merge function useful *)
   let combine (ds : fact list) : fact =
     let f fact1 fact2 =
+      let open SymConst in
       match fact1, fact2 with
-      | SymConst.Const a, SymConst.Const b when Int64.compare a b = 0 -> SymConst.Const a
-      | SymConst.Const _, SymConst.Const _ -> SymConst.NonConst
-      | SymConst.NonConst, _ | _, SymConst.NonConst -> SymConst.NonConst
-      | SymConst.UndefConst, _ | _, SymConst.UndefConst -> SymConst.UndefConst
+      | Const a, Const b when Int64.compare a b = 0 -> Const a
+      | Const _, Const _ -> NonConst
+      | NonConst, _ | _, NonConst -> NonConst
+      | UndefConst, _ | _, UndefConst -> UndefConst
     in
     List.fold_left
       (fun map new_fact ->
@@ -188,12 +164,55 @@ let analyze (g : Cfg.t) : Graph.t =
 (* run constant propagation on a cfg given analysis results ----------------- *)
 (* HINT: your cp_block implementation will probably rely on several helper
    functions. *)
+
+let replace_op op1 fact =
+  match op1 with
+  | Id id ->
+    (match UidM.find_opt id fact with
+     | Some (SymConst.Const a) -> Ll.Const a
+     | _ -> op1)
+  | _ -> op1
+;;
+
+let replace_ops op1 op2 fact = replace_op op1 fact, replace_op op2 fact
+
+let replace uid insn fact =
+  match insn with
+  | Binop (bop, ty, op1, op2) ->
+    let op1', op2' = replace_ops op1 op2 fact in
+    uid, Binop (bop, ty, op1', op2')
+  | Icmp (cnd, ty, op1, op2) ->
+    let op1', op2' = replace_ops op1 op2 fact in
+    uid, Icmp (cnd, ty, op1', op2')
+  | Store (ty, op1, op2) -> uid, Store (ty, replace_op op1 fact, op2)
+  | Call (ty, op, args) ->
+    uid, Call (ty, op, List.map (fun (ty, op) -> ty, replace_op op fact) args)
+  | Gep _ -> uid, insn
+  | _ -> uid, insn
+;;
+
+let replace_term (uid, term) fact =
+  match term with
+  | Ret (ty, Some (Id id_op)) ->
+    (match UidM.find_opt id_op fact with
+     | Some (SymConst.Const c) -> uid, Ret (ty, Some (Const c))
+     | _ -> uid, term)
+  | Cbr (Id id_op, l1, l2) ->
+    (match UidM.find_opt id_op fact with
+     | Some (SymConst.Const c) -> uid, Cbr (Ll.Const c, l1, l2)
+     | _ -> uid, term)
+  | _ -> uid, term
+;;
+
 let run (cg : Graph.t) (cfg : Cfg.t) : Cfg.t =
   let open SymConst in
   let cp_block (l : Ll.lbl) (cfg : Cfg.t) : Cfg.t =
-    let b = Cfg.block cfg l in
+    let { insns; term } = Cfg.block cfg l in
     let cb = Graph.uid_out cg l in
-    failwith "Constprop.cp_block unimplemented"
+    let insns' = List.map (fun (uid, insn) -> replace uid insn (cb uid)) insns in
+    let block' = { insns = insns'; term = replace_term term (cb (fst term)) } in
+    Cfg.add_block l block' cfg
+    (* failwith "Constprop.cp_block unimplemented" *)
   in
   LblS.fold cp_block (Cfg.nodes cfg) cfg
 ;;
