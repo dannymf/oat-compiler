@@ -40,18 +40,22 @@ let add_op_id (t : SymPtr.t) d = function
 let insn_flow ((u, i) : uid * insn) (d : fact) : fact =
   match i with
   | Alloca _ -> UidM.add u SymPtr.Unique d
-  | Load _ -> UidM.add u SymPtr.MayAlias d
-  | Store (_, _, op2) -> add_op_id SymPtr.MayAlias d op2
   | Bitcast (_, op, _) -> UidM.add u SymPtr.MayAlias (add_op_id SymPtr.MayAlias d op)
   | Call (_, _, ops) ->
     List.fold_left (fun d' op -> add_op_id SymPtr.MayAlias d' op) d (List.map snd ops)
   | Gep (_, op, ops) ->
     List.fold_left
       (fun d' op -> add_op_id SymPtr.MayAlias d' op)
-      (add_op_id SymPtr.MayAlias d op)
+      (UidM.add u SymPtr.MayAlias (add_op_id SymPtr.MayAlias d op))
       ops
+  (* | Store (_, _, op2) -> add_op_id SymPtr.MayAlias d op2 *)
+  (* | Load _ -> UidM.add u SymPtr.MayAlias d *)
   | _ -> d
 ;;
+
+(*
+    
+*)
 
 (* The flow function across terminators is trivial: they never change alias info *)
 let terminator_flow t (d : fact) : fact = d
@@ -86,8 +90,8 @@ module Fact = struct
     let f fact1 fact2 =
       match fact1, fact2 with
       | SymPtr.Unique, SymPtr.Unique -> SymPtr.Unique
-      | SymPtr.Unique, _ | _, SymPtr.Unique -> SymPtr.Unique
       | SymPtr.MayAlias, _ | _, SymPtr.MayAlias -> SymPtr.MayAlias
+      | SymPtr.Unique, _ | _, SymPtr.Unique -> SymPtr.Unique
       | SymPtr.UndefAlias, _ -> SymPtr.UndefAlias
     in
     List.fold_left
