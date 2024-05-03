@@ -290,7 +290,27 @@ let compile_pmov live (ol:(Alloc.loc * Ll.ty * Alloc.operand) list) : x86stream 
 
 (* compiling call  ---------------------------------------------------------- *)
 
-let compile_call live (fo:Alloc.operand) (os:(ty * Alloc.operand) list) : x86stream = 
+let compile_call live (x:Alloc.loc) (t:ty) (fo:Alloc.operand) (os:(ty * Alloc.operand) list) : x86stream =
+  (* Corner: fo is Loc (LReg r) and r is used in the calling conventions.
+     Then we use R15 to hold the function pointer, saving and restoring it,
+     since it is a callee-save register.  *)
+  let open Alloc in
+  let co = compile_operand in
+  let fptr_op, init_fp, restore_fp, stack_adjust =
+    begin match fo with
+      | Loc (LReg (Rdi | Rsi | Rdx | Rcx | R08 | R09)) ->
+        Loc (LReg R15),
+        [I Asm.(Pushq, [~%R15])] >@ (emit_mov (co fo) (Reg R15)),
+        [I Asm.(Popq, [~%R15])],
+        1
+      | _ -> fo, [], [], 0
+    end
+  in
+  let () = Platform.verb @@ Printf.sprintf "call: %s live = %s\n"
+      (str_operand fo) (str_locset live)
+  in
+  let save = LocSet.(elements @@ inter (remove x live) caller_save) in
+
   let oreg, ostk, _ = 
     List.fold_left (fun (oreg, ostk, i) (t, o) ->
         match arg_reg i with
@@ -299,25 +319,33 @@ let compile_call live (fo:Alloc.operand) (os:(ty * Alloc.operand) list) : x86str
       ) ([], [], 0) os in
   let nstack = List.length ostk in
   let live' = LocSet.of_list @@ List.map (fun (r,_,_) -> r) oreg in
+  let stack_adjust = (stack_adjust + nstack + (List.length save)) mod 2 == 1 in
   let align_stack_code =
-    [Asm.(Andq, [~$(-16); ~%Rsp])] @
-    if nstack mod 2 = 1 (* odd number of arguments *)
-    then Asm.[Subq, [~$ 8; ~%Rsp]]
+    [Asm.(Andq, [~$(-16); ~%Rsp])] >@
+    if stack_adjust
+    then Asm.[Subq, [~$8; ~%Rsp]]
     else []
   in
-  let restore_stack_code =
-    (if nstack > 0 then
-       let bytes = 8 * (nstack + (nstack mod 2)) in
-       Asm.[Addq, [~$ bytes; ~%Rsp]]
-     else [])
+  let unadjust_stack_code =
+    if stack_adjust
+    then Asm.[Addq, [~$8; ~%Rsp]]
+    else []
   in
   lift align_stack_code
+  >@ init_fp
+  >@ lift (List.rev_map (fun x -> Pushq, [co (Loc x)]) save)
+
   >@ lift (List.map (fun o -> Pushq, [compile_operand o]) ostk)
   >@ compile_pmov (LocSet.union live live') oreg
-  >:: I Asm.( Callq, [compile_operand fo] )
+  >:: I Asm.( Callq, [compile_operand fptr_op] )
   >@ lift (if nstack <= 0 then []
            else Asm.[ Addq, [~$(nstack * 8); ~%Rsp] ])
-  >@ lift restore_stack_code
+
+  >@ lift (List.map (fun x -> Popq, [co (Loc x)]) save)
+  >@ restore_fp
+  >@ lift unadjust_stack_code
+  >@ (if t = Ll.Void || x = LVoid then [] 
+      else lift Asm.[ Movq, [~%Rax; co (Loc x)] ])
 
 (* compiling getelementptr (gep)  ------------------------------------------- *)
 
@@ -509,31 +537,7 @@ let compile_fbody tdecls (af:Alloc.fbody) : x86stream =
            >:: I Asm.( Movq, [~%Rax; co (Loc x)] ) )
 
     | (Call (x, t,fo,os), live)::rest ->
-      (* Corner: fo is Loc (LReg r) and r is used in the calling conventions.
-         Then we use R15 to hold the function pointer, saving and restoring it, 
-         since it is a callee-save register.                                  *)
-      let fptr_op, init_fp, restore_fp =
-        begin match fo with
-          | Loc (LReg (Rdi | Rsi | Rdx | Rcx | R08 | R09)) ->
-            Loc (LReg R15),
-            [I Asm.(Pushq, [~%R15])] >@ (emit_mov (co fo) (Reg R15)),
-            [I Asm.(Popq, [~%R15])]
-          | _ -> fo, [], []     
-        end
-      in
-      let () = Platform.verb @@ Printf.sprintf "call: %s live = %s\n"
-          (str_operand fo) (str_locset live)
-      in
-       let save = LocSet.(elements @@ inter (remove x live) caller_save) in
-       loop rest @@ 
-       ( outstream
-         >@ init_fp
-         >@ lift (List.rev_map (fun x -> Pushq, [co (Loc x)]) save)
-         >@ compile_call live fptr_op os
-         >@ lift (List.map (fun x -> Popq, [co (Loc x)]) save)
-         >@ restore_fp
-         >@ (if t = Ll.Void || x = LVoid then [] 
-             else lift Asm.[ Movq, [~%Rax; co (Loc x)] ]) )
+       loop rest @@ ( outstream >@ compile_call live x t fo os )
 
     | (Ret (_,None), _)::rest ->
        loop rest @@ 
