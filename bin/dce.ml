@@ -29,7 +29,7 @@ let dce_block (lb : uid -> Liveness.Fact.t) (ab : uid -> Alias.fact) (b : Ll.blo
     | Call _ -> true
     | Store (_, _, op2) ->
       (match op2 with
-       | Id id_op ->
+       | Gid id_op | Id id_op ->
          UidS.mem id_op (lb uid)
          || UidM.find_opt id_op (ab uid) = Some Alias.SymPtr.MayAlias
        | _ -> failwith "op not id")

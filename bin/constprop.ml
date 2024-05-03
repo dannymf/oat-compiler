@@ -35,66 +35,91 @@ type fact = SymConst.t UidM.t
    - Uid of all other instructions are NonConst-out
 *)
 let eval_bop bop a b =
+  let a', b' =
+    match a, b with
+    | Const a, Const b -> a, b
+    | _ -> failwith "non-const bop"
+  in
   match bop with
-  | Add -> Int64.add a b
-  | Sub -> Int64.sub a b
-  | Mul -> Int64.mul a b
-  | Shl -> Int64.shift_left a (Int64.to_int b)
-  | Lshr -> Int64.shift_right_logical a (Int64.to_int b)
-  | Ashr -> Int64.shift_right a (Int64.to_int b)
-  | And -> Int64.logand a b
-  | Or -> Int64.logor a b
-  | Xor -> Int64.logxor a b
+  | Add -> Int64.add a' b'
+  | Sub -> Int64.sub a' b'
+  | Mul -> Int64.mul a' b'
+  | Shl -> Int64.shift_left a' (Int64.to_int b')
+  | Lshr -> Int64.shift_right_logical a' (Int64.to_int b')
+  | Ashr -> Int64.shift_right a' (Int64.to_int b')
+  | And -> Int64.logand a' b'
+  | Or -> Int64.logor a' b'
+  | Xor -> Int64.logxor a' b'
 ;;
 
-let eval_cnd cnd a b =
+let eval_icmp cnd a b =
   let wrap boo = if boo then 1L else 0L in
-  match cnd with
-  | Eq -> wrap @@ Int64.equal a b
-  | Ne -> wrap @@ not @@ Int64.equal a b
-  | Slt -> wrap (Int64.compare a b < 0)
-  | Sle -> wrap (Int64.compare a b <= 0)
-  | Sgt -> wrap (Int64.compare a b > 0)
-  | Sge -> wrap (Int64.compare a b >= 0)
+  match a, b with
+  | Const a, Const b ->
+    (match cnd with
+     | Eq -> wrap @@ Int64.equal a b
+     | Ne -> wrap @@ not @@ Int64.equal a b
+     | Slt -> wrap (Int64.compare a b < 0)
+     | Sle -> wrap (Int64.compare a b <= 0)
+     | Sgt -> wrap (Int64.compare a b > 0)
+     | Sge -> wrap (Int64.compare a b >= 0))
+  | Null, Null ->
+    (match cnd with
+     | Eq -> 1L
+     | Ne -> 0L
+     | _ -> failwith "invalid icmp")
+  | _, Null | Null, _ ->
+    (match cnd with
+     | Eq -> 0L
+     | Ne -> 1L
+     | _ -> failwith "invalid icmp")
+  | _ -> failwith "invalid icmp"
 ;;
 
 let eval_op u eval oper op1 op2 d =
   match op1, op2 with
-  | Const a, Const b -> UidM.add u (SymConst.Const (eval oper a b)) d
-  | Const a, Id id2 ->
+  | Const _, Const _ | Null, _ | _, Null ->
+    UidM.add u (SymConst.Const (eval oper op1 op2)) d
+  | Const a, Id id2 | Const a, Gid id2 ->
     let open SymConst in
     (try
        match UidM.find id2 d with
-       | Const b -> UidM.add u (Const (eval oper a b)) d
+       | Const b -> UidM.add u (Const (eval oper (Const a) (Const b))) d
        | UndefConst -> UidM.add u UndefConst d
        | NonConst -> UidM.add u NonConst d
      with
      | Not_found -> UidM.add u UndefConst d)
-  | Id id1, Const b ->
+  | Id id1, Const b | Gid id1, Const b ->
     let open SymConst in
     (try
        match UidM.find id1 d with
-       | Const a -> UidM.add u (Const (eval oper a b)) d
+       | Const a -> UidM.add u (Const (eval oper (Const a) (Const b))) d
        | UndefConst -> UidM.add u UndefConst d
        | NonConst -> UidM.add u NonConst d
      with
      | Not_found -> UidM.add u UndefConst d)
-  | Id id1, Id id2 ->
+  | Id id1, Id id2 | Gid id1, Gid id2 | Gid id1, Id id2 | Id id1, Gid id2 ->
     let open SymConst in
     (try
        match UidM.find id1 d, UidM.find id2 d with
-       | Const a, Const b -> UidM.add u (Const (eval oper a b)) d
+       | Const a, Const b -> UidM.add u (Const (eval oper (Const a) (Const b))) d
        | UndefConst, _ | _, UndefConst -> UidM.add u UndefConst d
        | NonConst, _ | _, NonConst -> UidM.add u NonConst d
      with
      | Not_found -> UidM.add u UndefConst d)
-  | _ -> failwith "non id/const operands"
 ;;
+
+(* | _ ->
+    failwith
+    @@ Printf.sprintf
+         "non id/const operands for op1: %s and op2: %s"
+         (Llutil.string_of_operand op1)
+         (Llutil.string_of_operand op2) *)
 
 let insn_flow ((u, i) : uid * insn) (d : fact) : fact =
   match i with
   | Binop (bop, _, op1, op2) -> eval_op u eval_bop bop op1 op2 d
-  | Icmp (cnd, _, op1, op2) -> eval_op u eval_cnd cnd op1 op2 d
+  | Icmp (cnd, _, op1, op2) -> eval_op u eval_icmp cnd op1 op2 d
   | Store _ | Call (Void, _, _) -> UidM.add u SymConst.UndefConst d
   | _ -> UidM.add u SymConst.NonConst d
 ;;
