@@ -40,18 +40,29 @@ let add_op_id (t : SymPtr.t) d = function
 let insn_flow ((u, i) : uid * insn) (d : fact) : fact =
   match i with
   | Alloca _ -> UidM.add u SymPtr.Unique d
-  | Bitcast (_, op, _) -> UidM.add u SymPtr.MayAlias (add_op_id SymPtr.MayAlias d op)
-  | Call (_, _, ops) ->
-    List.fold_left (fun d' op -> add_op_id SymPtr.MayAlias d' op) d (List.map snd ops)
-  | Gep (_, op, ops) ->
+  | Gep (_, op, _) | Bitcast (_, op, _) ->
+    UidM.add u SymPtr.MayAlias (add_op_id SymPtr.MayAlias d op)
+  | Call (ret, _, ops) ->
+    let d' =
+      match ret with
+      | Ptr _ -> UidM.add u SymPtr.MayAlias d
+      | _ -> d
+    in
     List.fold_left
       (fun d' op -> add_op_id SymPtr.MayAlias d' op)
-      (UidM.add u SymPtr.MayAlias (add_op_id SymPtr.MayAlias d op))
-      ops
-  (* | Store (_, _, op2) -> add_op_id SymPtr.MayAlias d op2 *)
-  (* | Load _ -> UidM.add u SymPtr.MayAlias d *)
+      d'
+      (List.filter_map
+         (fun (ty, op') ->
+           match ty with
+           | Ptr _ -> Some op'
+           | _ -> None)
+         ops)
+  | Store (Ptr _, op1, _) -> add_op_id SymPtr.MayAlias d op1
+  | Load (Ptr (Ptr _), _) -> UidM.add u SymPtr.MayAlias d
   | _ -> d
 ;;
+
+(* UidM.add u SymPtr.MayAlias d *)
 
 (*
     
@@ -91,8 +102,7 @@ module Fact = struct
       match fact1, fact2 with
       | SymPtr.Unique, SymPtr.Unique -> SymPtr.Unique
       | SymPtr.MayAlias, _ | _, SymPtr.MayAlias -> SymPtr.MayAlias
-      | SymPtr.Unique, _ | _, SymPtr.Unique -> SymPtr.Unique
-      | SymPtr.UndefAlias, _ -> SymPtr.UndefAlias
+      | SymPtr.UndefAlias, f | f, SymPtr.UndefAlias -> f
     in
     List.fold_left
       (fun map new_fact ->
