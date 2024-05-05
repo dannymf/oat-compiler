@@ -781,25 +781,44 @@ let better_layout (f:Ll.fdecl) (live:liveness) : layout =
   in
   (* key = uid, value = set of uids that are simultaneously live*)
   let inference_graph = List.fold_left add_edges empty_m uids in
-  (* let color_graph  *)
-  (* for every uid - check which other uids are live and add "edges" to the map 
-     by adding it to the list of values *)
-  (* color inference graph - greedy, we have 7 "colors"*)
-  (* use coloring information to allocate registers *)
-
-  (* copied from above, this will populate the output*)
-  let lo, n_stk = 
-    fold_fdecl
-      (fun (lo, n) (x, _) -> (x, Alloc.LStk (- (n + 1)))::lo, n + 1)
-      (fun (lo, n) l -> (l, Alloc.LLbl (Platform.mangle l))::lo, n)
-      (fun (lo, n) (x, i) ->
-        if insn_assigns i 
-        then (x, Alloc.LStk (- (n + 1)))::lo, n + 1
-        else (x, Alloc.LVoid)::lo, n)
-      (fun a _ -> a)
-  ([], 0) f in
-  failwith "Backend.better_layout not implemented"
-
+  let rec make_stack (g: UidS.t UidM.t) ls =
+    let find_node (g: UidS.t UidM.t) = 
+      let res = UidM.filter (fun k v -> UidS.cardinal v < LocSet.cardinal pal) g |> UidM.choose_opt in 
+      match res with
+      | Some (k,v) -> (false, k)
+      | None -> begin 
+        match UidM.choose_opt g with
+        | Some (k,v) -> (true, k)
+        | None -> failwith "impossible"
+      end
+    in
+    if UidM.is_empty g then ls
+    else
+      let (to_spill, node) = find_node g in
+      let new_g = UidM.remove node g |> UidM.map (fun v -> UidS.filter (fun x -> x <> node) v) in
+      let new_ls = (to_spill, node) :: ls in
+      make_stack new_g new_ls
+  in
+  let stack = make_stack inference_graph [] in
+  let rec color_graph (g: UidS.t UidM.t) (ls: (bool * uid) list) (colors: (uid * Alloc.loc) list) =
+    match ls with
+    | [] -> colors
+    | (true, node) :: rest -> 
+      let new_colors = (node, Alloc.LStk (- (List.length colors + 1))) :: colors in
+      color_graph g rest new_colors
+    | (false, node) :: rest -> 
+      let liveuids = UidM.find node g in
+      let used_colors = List.fold_left (fun acc x -> 
+        try (List.assoc x colors) :: acc
+        with Not_found -> acc) [] (UidS.elements liveuids) in
+      let available_colors = LocSet.diff pal (LocSet.of_list used_colors) in
+      let color = LocSet.choose available_colors in
+      let new_colors = (node, color) :: colors in
+      color_graph (UidM.remove node g) rest new_colors
+  in
+  let colors = color_graph inference_graph stack [] in
+  { uid_loc = (fun x -> List.assoc x colors); 
+    spill_bytes = 8 * (List.length stack) }
 
 
 (* register allocation options ---------------------------------------------- *)
