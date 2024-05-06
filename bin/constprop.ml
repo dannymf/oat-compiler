@@ -68,7 +68,7 @@ let eval_icmp cnd a b =
      | Eq -> 1L
      | Ne -> 0L
      | _ -> failwith "invalid icmp")
-  | _, Null | Null, _ ->
+  | Const _, Null | Null, Const _ ->
     (match cnd with
      | Eq -> 0L
      | Ne -> 1L
@@ -77,27 +77,26 @@ let eval_icmp cnd a b =
 ;;
 
 let eval_op u eval oper op1 op2 d =
+  (* is the parameter the first one of the comparison? *)
+  let process id param is_fst =
+    try
+      match UidM.find id d with
+      | SymConst.Const x ->
+        UidM.add
+          u
+          (SymConst.Const
+             (if is_fst then eval oper param (Const x) else eval oper (Const x) param))
+          d
+      | SymConst.UndefConst -> UidM.add u SymConst.UndefConst d
+      | SymConst.NonConst -> UidM.add u SymConst.NonConst d
+    with
+    | Not_found -> UidM.add u SymConst.UndefConst d
+  in
   match op1, op2 with
-  | Const _, Const _ | Null, _ | _, Null ->
+  | Const _, Const _ | Null, Const _ | Const _, Null | Null, Null ->
     UidM.add u (SymConst.Const (eval oper op1 op2)) d
-  | Const a, Id id2 | Const a, Gid id2 ->
-    let open SymConst in
-    (try
-       match UidM.find id2 d with
-       | Const b -> UidM.add u (Const (eval oper (Const a) (Const b))) d
-       | UndefConst -> UidM.add u UndefConst d
-       | NonConst -> UidM.add u NonConst d
-     with
-     | Not_found -> UidM.add u UndefConst d)
-  | Id id1, Const b | Gid id1, Const b ->
-    let open SymConst in
-    (try
-       match UidM.find id1 d with
-       | Const a -> UidM.add u (Const (eval oper (Const a) (Const b))) d
-       | UndefConst -> UidM.add u UndefConst d
-       | NonConst -> UidM.add u NonConst d
-     with
-     | Not_found -> UidM.add u UndefConst d)
+  | Const a, Id id2 | Const a, Gid id2 -> process id2 (Const a) true
+  | Id id1, Const b | Gid id1, Const b -> process id1 (Const b) false
   | Id id1, Id id2 | Gid id1, Gid id2 | Gid id1, Id id2 | Id id1, Gid id2 ->
     let open SymConst in
     (try
@@ -107,14 +106,9 @@ let eval_op u eval oper op1 op2 d =
        | NonConst, _ | _, NonConst -> UidM.add u NonConst d
      with
      | Not_found -> UidM.add u UndefConst d)
+  | Null, Id id | Null, Gid id -> process id Null true
+  | Id id, Null | Gid id, Null -> process id Null false
 ;;
-
-(* | _ ->
-    failwith
-    @@ Printf.sprintf
-         "non id/const operands for op1: %s and op2: %s"
-         (Llutil.string_of_operand op1)
-         (Llutil.string_of_operand op2) *)
 
 let insn_flow ((u, i) : uid * insn) (d : fact) : fact =
   match i with

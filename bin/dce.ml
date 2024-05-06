@@ -28,21 +28,11 @@ let dce_block (lb : uid -> Liveness.Fact.t) (ab : uid -> Alias.fact) (b : Ll.blo
     match insn with
     | Call _ -> true
     | Store (ty, _, op2) ->
-      (* Printf.printf
-         "dce: Store (%s, %s, %s) | result=%b\n"
-         (Llutil.string_of_ty ty)
-         (Llutil.string_of_operand op1)
-         (Llutil.string_of_operand op2)
-         (match op2 with
-         | Gid id_op | Id id_op ->
-         UidS.mem id_op (lb uid)
-         || UidM.find_opt id_op (ab uid) = Some Alias.SymPtr.MayAlias
-         | _ -> failwith "op not id"); *)
       (match op2 with
-       | Gid id_op | Id id_op ->
-         (* UidS.printer Format.std_formatter (lb uid); *)
+       | Id id_op ->
          UidS.mem id_op (lb uid)
          || UidM.find_opt id_op (ab uid) = Some Alias.SymPtr.MayAlias
+       | Gid _ -> true
        | _ -> failwith "op not id")
     | _ -> UidS.mem uid (lb uid)
   in
