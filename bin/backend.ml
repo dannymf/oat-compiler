@@ -746,40 +746,53 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
     let rec pairwith elem rest acc =
       if UidS.is_empty rest then acc
       else 
-        let chosen = try UidS.choose rest 
-          with | Not_found -> failwith __LOC__ in
+        let chosen = UidS.choose rest in
         let new_set = UidS.remove chosen rest in
-        pairwith elem new_set ((elem, chosen) :: acc)
+        pairwith elem new_set ((chosen, elem) :: (elem, chosen) :: acc)
     in
     if UidS.is_empty uids then acc else
-      let chosen = try UidS.choose uids 
-        with | Not_found -> failwith __LOC__ in
+      let chosen = UidS.choose uids in
       let new_set = UidS.remove chosen uids in
-      make_pairs new_set (pairwith chosen new_set [] @ acc)
+      make_pairs new_set (pairwith chosen uids [] @ acc)
   in
   let rec add_pairs m pairs = 
     match pairs with
     | [] -> m
     | (key ,value) :: rest -> (if UidM.mem key m then 
-        try
-        (UidM.update (fun set -> UidS.add value set) key m) 
-        with | Not_found -> failwith __LOC__
-      else UidM.add key (UidS.singleton value) m)
+      UidM.update (fun (set,opt) -> (UidS.add value set, opt)) key m
+      else UidM.add key ((UidS.singleton value), None) m)
   in
   (* key = uid, value = set of uids that are simultaneously live*)
   let update_map m (x,i) = 
     let liveuids = try live.live_in x with | Not_found -> failwith __LOC__ in
     let pairs = make_pairs liveuids [] in
     add_pairs m pairs in
+  let n_arg = ref 0 in
+  let n_spill = ref 0 in
+  let spill () =
+    incr n_spill;
+    Alloc.LStk (- !n_spill) in
+  let alloc_arg () =
+    let res =
+      match arg_loc !n_arg with
+      | Alloc.LReg Rcx -> spill ()
+      | x -> x
+    in
+    incr n_arg;
+    res
+  in
+  (* add coloring information to intereference graph *)
   let interference_graph = fold_fdecl
-    update_map (fun m _ -> m) update_map update_map
+    (fun m (x,i) -> UidM.add x (UidS.empty, Some (alloc_arg ())) m ) (* add parameters with pre-colors to map *)
+    (fun m _ -> m) 
+    update_map update_map
     UidM.empty
     f
   in
-  let rec make_stack (g : UidS.t UidM.t) ls =
-    let find_node (g : UidS.t UidM.t) =
+  let rec make_stack (g : (UidS.t * Alloc.loc option) UidM.t) ls =
+    let find_node (g : (UidS.t * Alloc.loc option) UidM.t) =
       let res =
-        UidM.filter (fun k v -> UidS.cardinal v < LocSet.cardinal pal) g
+        UidM.filter (fun k (v, _) -> UidS.cardinal v < LocSet.cardinal pal) g
         |> UidM.choose_opt
       in
       match res with
@@ -794,60 +807,45 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
     else (
       let to_spill, node = find_node g in
       let new_g =
-        UidM.remove node g |> UidM.map (fun v -> UidS.filter (fun x -> x <> node) v)
+        UidM.remove node g |> UidM.map (fun (v, color) -> (UidS.filter (fun x -> x <> node) v, color))
       in
       let new_ls = (to_spill, node) :: ls in
       make_stack new_g new_ls)
   in
   let stack = make_stack interference_graph [] in
+  let get_color node colors = 
+      let (liveuids, currcolor) = UidM.find node interference_graph in
+      match currcolor with
+      | None -> 
+        let used_colors =
+          List.fold_left
+            (fun acc x ->
+              try List.assoc x colors :: acc with
+              | Not_found -> match UidM.find_opt x interference_graph with
+                | Some (_, Some color) -> color :: acc
+                | _ -> acc)
+            []
+            (UidS.elements liveuids)
+        in
+        let available_colors = LocSet.diff pal (LocSet.of_list used_colors) in
+        let color =
+          try LocSet.choose available_colors with
+          | Not_found -> spill ()
+        in
+        (node,color) :: colors
+      | Some color -> 
+        (node, color) :: colors
+  in
   let rec color_graph
-    (g : UidS.t UidM.t) (* can remove this, bc the graph g is fixed *)
     (ls : (bool * uid) list)
     (colors : (uid * Alloc.loc) list)
     =
     match ls with
     | [] -> colors
-    | (true, node) :: rest ->
-      (* Need to modify this bc it's a potential spill, not actual *)
-      let new_colors = (node, Alloc.LStk (-(List.length colors + 1))) :: colors in
-      color_graph g rest new_colors
-    | (false, node) :: rest ->
-      let liveuids =
-        try UidM.find node g with
-        | Not_found -> failwith "impossible"
-      in
-      let used_colors =
-        List.fold_left
-          (fun acc x ->
-            try List.assoc x colors :: acc with
-            | Not_found -> acc)
-          []
-          (UidS.elements liveuids)
-      in
-      let available_colors = LocSet.diff pal (LocSet.of_list used_colors) in
-      let color =
-        try LocSet.choose available_colors with
-        | Not_found -> failwith "argh"
-      in
-      let new_colors = (node, color) :: colors in
-      color_graph (UidM.remove node g) rest new_colors
+    | (_, node) :: rest ->
+      color_graph rest (get_color node colors)
   in
-  let colors = color_graph interference_graph stack [] in
-  let n_arg = ref 0 in
-  let n_spill = ref 0 in
-  let spill () =
-    incr n_spill;
-    Alloc.LStk (- !n_spill)
-  in
-  let alloc_arg () =
-    let res =
-      match arg_loc !n_arg with
-      | Alloc.LReg Rcx -> spill ()
-      | x -> x
-    in
-    incr n_arg;
-    res
-  in
+  let colors = color_graph stack [] in
   let lo =
     fold_fdecl
       (fun lo (x, _) -> (x, alloc_arg ()) :: lo)
@@ -857,7 +855,7 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
         then
           ( x
           , try List.assoc x colors with
-            | Not_found -> failwith "ayay" )
+            | Not_found -> failwith x )
           :: lo
         else (x, Alloc.LVoid) :: lo)
       (fun lo _ -> lo)
