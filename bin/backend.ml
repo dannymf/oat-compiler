@@ -657,7 +657,8 @@ let greedy_layout (f : Ll.fdecl) (live : liveness) : layout =
         let used_locs =
           UidSet.fold
             (fun y -> LocSet.add (List.assoc y lo))
-            (live.live_in uid)
+            (try live.live_in uid with
+             | Not_found -> failwith "eggs")
             LocSet.empty
         in
         let available_locs = LocSet.diff pal used_locs in
@@ -751,16 +752,21 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
   let uids = getuids f.f_cfg in
   let empty_m = UidM.empty in
   let add_edges acc u =
-    let liveuids = live.live_out u in
+    let liveuids =
+      try live.live_out u with
+      | Not_found -> failwith __LOC__
+    in
     let added_binding = UidM.add u liveuids acc in
     (* want to iterate through liveuids + add u to each of their sets *)
     UidS.fold
-      (fun key map -> UidM.update (fun set -> UidS.add u set) key map)
+      (fun key map ->
+        try UidM.update (fun set -> UidS.add u set) key map with
+        | Not_found -> UidM.add key (UidS.singleton u) map)
       liveuids
       added_binding
   in
   (* key = uid, value = set of uids that are simultaneously live*)
-  let inference_graph = List.fold_left add_edges empty_m uids in
+  let interference_graph = List.fold_left add_edges empty_m uids in
   let rec make_stack (g : UidS.t UidM.t) ls =
     let find_node (g : UidS.t UidM.t) =
       let res =
@@ -784,7 +790,7 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
       let new_ls = (to_spill, node) :: ls in
       make_stack new_g new_ls)
   in
-  let stack = make_stack inference_graph [] in
+  let stack = make_stack interference_graph [] in
   let rec color_graph
     (g : UidS.t UidM.t)
     (ls : (bool * uid) list)
@@ -793,10 +799,14 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
     match ls with
     | [] -> colors
     | (true, node) :: rest ->
+      (* Need to modify this bc it's a potential spill, not actual *)
       let new_colors = (node, Alloc.LStk (-(List.length colors + 1))) :: colors in
       color_graph g rest new_colors
     | (false, node) :: rest ->
-      let liveuids = UidM.find node g in
+      let liveuids =
+        try UidM.find node g with
+        | Not_found -> failwith "impossible"
+      in
       let used_colors =
         List.fold_left
           (fun acc x ->
@@ -806,12 +816,51 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
           (UidS.elements liveuids)
       in
       let available_colors = LocSet.diff pal (LocSet.of_list used_colors) in
-      let color = LocSet.choose available_colors in
+      let color =
+        try LocSet.choose available_colors with
+        | Not_found -> failwith "argh"
+      in
       let new_colors = (node, color) :: colors in
       color_graph (UidM.remove node g) rest new_colors
   in
-  let colors = color_graph inference_graph stack [] in
-  { uid_loc = (fun x -> List.assoc x colors); spill_bytes = 8 * List.length stack }
+  let colors = color_graph interference_graph stack [] in
+  let n_arg = ref 0 in
+  let n_spill = ref 0 in
+  let spill () =
+    incr n_spill;
+    Alloc.LStk (- !n_spill)
+  in
+  let alloc_arg () =
+    let res =
+      match arg_loc !n_arg with
+      | Alloc.LReg Rcx -> spill ()
+      | x -> x
+    in
+    incr n_arg;
+    res
+  in
+  let lo =
+    fold_fdecl
+      (fun lo (x, _) -> (x, alloc_arg ()) :: lo)
+      (fun lo l -> (l, Alloc.LLbl (Platform.mangle l)) :: lo)
+      (fun lo (x, i) ->
+        if insn_assigns i
+        then
+          ( x
+          , try List.assoc x colors with
+            | Not_found -> failwith "ayay" )
+          :: lo
+        else (x, Alloc.LVoid) :: lo)
+      (fun lo _ -> lo)
+      []
+      f
+  in
+  { uid_loc =
+      (fun x ->
+        try List.assoc x lo with
+        | Not_found -> failwith "ooof")
+  ; spill_bytes = 8 * List.length stack
+  }
 ;;
 
 (* failwith "Backend.better_layout not implemented" *)
