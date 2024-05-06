@@ -738,35 +738,44 @@ let greedy_layout (f : Ll.fdecl) (live : liveness) : layout =
 *)
 open Datastructures
 
+(* let better_layout = no_reg_layout *)
+
 let better_layout (f : Ll.fdecl) (live : liveness) : layout =
-  (* extracts all the uids from a cfg *)
-  let getuids (c : cfg) : uid list =
-    let blocks = fst c :: List.map snd (snd c) in
-    let get_uids block =
-      let insnsuids = List.fold_right (fun (u, _) acc -> u :: acc) block.insns [] in
-      fst block.term :: insnsuids
-    in
-    List.fold_right (fun b acc -> get_uids b @ acc) blocks []
-  in
   let pal = LocSet.(caller_save |> remove (Alloc.LReg Rax) |> remove (Alloc.LReg Rcx)) in
-  let uids = getuids f.f_cfg in
-  let empty_m = UidM.empty in
-  let add_edges acc u =
-    let liveuids =
-      try live.live_out u with
-      | Not_found -> failwith __LOC__
+  let rec make_pairs uids acc = 
+    let rec pairwith elem rest acc =
+      if UidS.is_empty rest then acc
+      else 
+        let chosen = try UidS.choose rest 
+          with | Not_found -> failwith __LOC__ in
+        let new_set = UidS.remove chosen rest in
+        pairwith elem new_set ((elem, chosen) :: acc)
     in
-    let added_binding = UidM.add u liveuids acc in
-    (* want to iterate through liveuids + add u to each of their sets *)
-    UidS.fold
-      (fun key map ->
-        try UidM.update (fun set -> UidS.add u set) key map with
-        | Not_found -> UidM.add key (UidS.singleton u) map)
-      liveuids
-      added_binding
+    if UidS.is_empty uids then acc else
+      let chosen = try UidS.choose uids 
+        with | Not_found -> failwith __LOC__ in
+      let new_set = UidS.remove chosen uids in
+      make_pairs new_set (pairwith chosen new_set [] @ acc)
+  in
+  let rec add_pairs m pairs = 
+    match pairs with
+    | [] -> m
+    | (key ,value) :: rest -> (if UidM.mem key m then 
+        try
+        (UidM.update (fun set -> UidS.add value set) key m) 
+        with | Not_found -> failwith __LOC__
+      else UidM.add key (UidS.singleton value) m)
   in
   (* key = uid, value = set of uids that are simultaneously live*)
-  let interference_graph = List.fold_left add_edges empty_m uids in
+  let update_map m (x,i) = 
+    let liveuids = try live.live_in x with | Not_found -> failwith __LOC__ in
+    let pairs = make_pairs liveuids [] in
+    add_pairs m pairs in
+  let interference_graph = fold_fdecl
+    update_map (fun m _ -> m) update_map update_map
+    UidM.empty
+    f
+  in
   let rec make_stack (g : UidS.t UidM.t) ls =
     let find_node (g : UidS.t UidM.t) =
       let res =
@@ -792,7 +801,7 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
   in
   let stack = make_stack interference_graph [] in
   let rec color_graph
-    (g : UidS.t UidM.t)
+    (g : UidS.t UidM.t) (* can remove this, bc the graph g is fixed *)
     (ls : (bool * uid) list)
     (colors : (uid * Alloc.loc) list)
     =
