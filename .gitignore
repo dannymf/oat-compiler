@@ -9,3 +9,4 @@ ocamlbin
 output
 a.out
 .devcontainer/ocaml-platform.vsix
+hw5-submit-*

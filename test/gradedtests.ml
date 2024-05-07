@@ -623,6 +623,7 @@ let hw3sp24_tests =
   ; "hw3programs/sp24_tests/numberofislands.oat", "", "7"
   ; "hw3programs/sp24_tests/disappearing_blocks.oat", "", "99"
   ; "hw3programs/sp24_tests/twosum.oat", "", "Correct!0"
+  (* ; "hw3programs/sp24_tests/some_terrible_code.oat", "", "Correct!0" *)
   ]
 ;;
 

@@ -1,0 +1,53 @@
+/* references this website https://www.geeksforgeeks.org/check-if-pair-with-given-sum-exists-in-array/ */
+/* given a sorted list, determines if any two numbers sum to the target */
+
+bool two_sum (int[] ls, int target, int arrsize) {
+  var left = 0;
+  var right = arrsize-1;
+
+  while (left < right) {
+    var currsum = ls[left] + ls[right];
+    if (currsum == target) {
+      return true;
+    }
+    else {
+      if (currsum < target) {
+        left = left + 1;
+      }
+      else {
+        right = right - 1;
+      }
+    }
+  }
+
+  return false;
+
+}
+
+bool two_sum_naive (int[] input, int target, int arrlen) {
+  for (var i = 0; i < arrlen; i = (i+1);)
+  {
+    for (var j = (i+1); j < arrlen; j = (j+1);)
+    {
+      var test_sum = input[i] + input[j];
+      if (test_sum == target) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+int program (int argc, string[] argv) {
+
+  var a1 = new int[10000]{x -> 10000 - x};
+
+  var sum1 = two_sum (a1, 4872, 10000);
+  var sum1n = two_sum_naive (a1, 4872, 10000);
+  var sum2 = two_sum (a1, 2024, 10000);
+  var sum2n = two_sum_naive (a1, 2024, 10000);
+  var sum3 = two_sum (a1, 8920, 10000);
+  var sum3n = two_sum_naive (a1, 8920, 10000);
+
+  return 0;
+}
