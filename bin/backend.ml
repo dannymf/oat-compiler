@@ -738,43 +738,136 @@ let greedy_layout (f : Ll.fdecl) (live : liveness) : layout =
 *)
 open Datastructures
 
+module Graph = struct
+  type node = uid
+  type t = (Alloc.loc option * UidS.t) UidM.t
+
+  let empty : t = UidM.empty
+
+  let add_node (uid : node) (color : Alloc.loc option) (graph : t) =
+    if UidM.mem uid graph then graph else UidM.add uid (color, UidS.empty) graph
+  ;;
+
+  let add_color (uid : node) (color : Alloc.loc) (graph : t) =
+    try
+      match UidM.find uid graph with
+      | Some c, _ ->
+        failwith @@ Printf.sprintf "node %s already colored %s" uid (Alloc.str_loc c)
+      | None, lives -> UidM.add uid (Some color, lives)
+    with
+    | Not_found -> failwith @@ Printf.sprintf "node %s not in graph" uid
+  ;;
+
+  (* adds edge from s - t (undirected) *)
+  let add_edge (s : node) (t : node) (graph : t) =
+    let s_color, s_adj =
+      try UidM.find s graph with
+      | Not_found -> None, UidS.empty
+    in
+    let t_color, t_adj =
+      try UidM.find t graph with
+      | Not_found -> None, UidS.empty
+    in
+    UidM.add s (s_color, UidS.add t s_adj) graph |> UidM.add s (t_color, UidS.add s t_adj)
+  ;;
+
+  let rem_node (s : node) (graph : t) =
+    UidM.remove s graph |> UidM.map (fun (c, set) -> c, UidS.remove s)
+  ;;
+
+  let neighbors (s : node) (graph : t) =
+    try UidM.find s graph with
+    | Not_found -> failwith @@ Printf.sprintf "node %s not in graph" s
+  ;;
+
+  let outdegree (s : node) (graph : t) =
+    try UidS.cardinal @@ snd @@ UidM.find s graph with
+    | Not_found -> failwith @@ Printf.sprintf "node %s not in graph" s
+  ;;
+
+  let choose (f : node -> bool) (graph : t) =
+    let k, v =
+      try UidM.find_first f graph with
+      | Not_found -> failwith "no node satisfying choose predicate"
+    in
+    k, UidM.remove k graph
+  ;;
+end
+
 (* let better_layout = no_reg_layout *)
 
 let better_layout (f : Ll.fdecl) (live : liveness) : layout =
-  let pal = LocSet.(caller_save |> remove (Alloc.LReg Rax) |> remove (Alloc.LReg Rcx)) in
-  let rec make_pairs uids acc = 
-    let rec pairwith elem rest acc =
-      if UidS.is_empty rest then acc
-      else 
-        let chosen = try UidS.choose rest 
-          with | Not_found -> failwith __LOC__ in
-        let new_set = UidS.remove chosen rest in
-        pairwith elem new_set ((elem, chosen) :: acc)
-    in
-    if UidS.is_empty uids then acc else
-      let chosen = try UidS.choose uids 
-        with | Not_found -> failwith __LOC__ in
-      let new_set = UidS.remove chosen uids in
-      make_pairs new_set (pairwith chosen new_set [] @ acc)
+  let n_arg = ref 0 in
+  let n_spill = ref 0 in
+  let spill () =
+    incr n_spill;
+    Alloc.LStk (- !n_spill)
   in
-  let rec add_pairs m pairs = 
+  let alloc_arg () =
+    let res =
+      match arg_loc !n_arg with
+      | Alloc.LReg Rcx -> spill ()
+      | x -> x
+    in
+    incr n_arg;
+    res
+  in
+  let colors = UidM.empty in
+  let interference_graph =
+    fold_fdecl
+      (fun color_map (uid, _) ->
+        let loc = alloc_arg () in
+        Graph.add_node uid (Some loc) color_map)
+      (fun m _ -> m)
+      (fun color_map (uid, _) -> failwith "TODO")
+      (fun color_map _ -> failwith "TODO")
+      Graph.empty
+      f
+  in
+  let pal = LocSet.(caller_save |> remove (Alloc.LReg Rax) |> remove (Alloc.LReg Rcx)) in
+  let rec make_pairs uids acc =
+    let rec pairwith elem rest acc =
+      if UidS.is_empty rest
+      then acc
+      else (
+        let chosen =
+          try UidS.choose rest with
+          | Not_found -> failwith __LOC__
+        in
+        let new_set = UidS.remove chosen rest in
+        pairwith elem new_set ((elem, chosen) :: acc))
+    in
+    if UidS.is_empty uids
+    then acc
+    else (
+      let chosen =
+        try UidS.choose uids with
+        | Not_found -> failwith __LOC__
+      in
+      let new_set = UidS.remove chosen uids in
+      make_pairs new_set (pairwith chosen new_set [] @ acc))
+  in
+  let rec add_pairs m pairs =
     match pairs with
     | [] -> m
-    | (key ,value) :: rest -> (if UidM.mem key m then 
-        try
-        (UidM.update (fun set -> UidS.add value set) key m) 
-        with | Not_found -> failwith __LOC__
-      else UidM.add key (UidS.singleton value) m)
+    | (key, value) :: rest ->
+      if UidM.mem key m
+      then (
+        try UidM.update (fun set -> UidS.add value set) key m with
+        | Not_found -> failwith __LOC__)
+      else UidM.add key (UidS.singleton value) m
   in
   (* key = uid, value = set of uids that are simultaneously live*)
-  let update_map m (x,i) = 
-    let liveuids = try live.live_in x with | Not_found -> failwith __LOC__ in
+  let update_map m (x, i) =
+    let liveuids =
+      try live.live_in x with
+      | Not_found -> failwith __LOC__
+    in
     let pairs = make_pairs liveuids [] in
-    add_pairs m pairs in
-  let interference_graph = fold_fdecl
-    update_map (fun m _ -> m) update_map update_map
-    UidM.empty
-    f
+    add_pairs m pairs
+  in
+  let interference_graph =
+    fold_fdecl update_map (fun m _ -> m) update_map update_map UidM.empty f
   in
   let rec make_stack (g : UidS.t UidM.t) ls =
     let find_node (g : UidS.t UidM.t) =
@@ -833,21 +926,6 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
       color_graph (UidM.remove node g) rest new_colors
   in
   let colors = color_graph interference_graph stack [] in
-  let n_arg = ref 0 in
-  let n_spill = ref 0 in
-  let spill () =
-    incr n_spill;
-    Alloc.LStk (- !n_spill)
-  in
-  let alloc_arg () =
-    let res =
-      match arg_loc !n_arg with
-      | Alloc.LReg Rcx -> spill ()
-      | x -> x
-    in
-    incr n_arg;
-    res
-  in
   let lo =
     fold_fdecl
       (fun lo (x, _) -> (x, alloc_arg ()) :: lo)
