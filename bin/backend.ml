@@ -758,13 +758,15 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
   let rec add_pairs m pairs = 
     match pairs with
     | [] -> m
-    | (key ,value) :: rest -> (if UidM.mem key m then 
+    | (key ,value) :: rest -> 
+      let new_map = (if UidM.mem key m then 
       UidM.update (fun (set,opt) -> (UidS.add value set, opt)) key m
-      else UidM.add key ((UidS.singleton value), None) m)
+      else UidM.add key ((UidS.singleton value), None) m) in
+      add_pairs new_map rest
   in
   (* key = uid, value = set of uids that are simultaneously live*)
   let update_map m (x,i) = 
-    let liveuids = try live.live_in x with | Not_found -> failwith __LOC__ in
+    let liveuids = live.live_in x in
     let pairs = make_pairs liveuids [] in
     add_pairs m pairs in
   let n_arg = ref 0 in
@@ -789,6 +791,9 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
     UidM.empty
     f
   in
+  (* printing graph *)
+  (* UidM.iter (fun x _ -> print_endline x) interference_graph;
+  print_endline ("END OF GRAPH KEYS"); *)
   let rec make_stack (g : (UidS.t * Alloc.loc option) UidM.t) ls =
     let find_node (g : (UidS.t * Alloc.loc option) UidM.t) =
       let res =
@@ -846,17 +851,21 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
       color_graph rest (get_color node colors)
   in
   let colors = color_graph stack [] in
+  (* List.iter (fun (x, _) -> print_endline x) colors;
+  print_endline "______"; *)
   let lo =
     fold_fdecl
-      (fun lo (x, _) -> (x, alloc_arg ()) :: lo)
+      (fun lo (x, _) -> ( x
+          , try List.assoc x colors with
+            | Not_found -> failwith ("not found" ^ x ))
+          :: lo)
       (fun lo l -> (l, Alloc.LLbl (Platform.mangle l)) :: lo)
       (fun lo (x, i) ->
         if insn_assigns i
         then
-          ( x
-          , try List.assoc x colors with
-            | Not_found -> failwith x )
-          :: lo
+          match List.assoc_opt x colors with
+          | Some color -> ( x, color ) :: lo
+          | None -> (x, Alloc.LVoid) :: lo
         else (x, Alloc.LVoid) :: lo)
       (fun lo _ -> lo)
       []
@@ -865,8 +874,8 @@ let better_layout (f : Ll.fdecl) (live : liveness) : layout =
   { uid_loc =
       (fun x ->
         try List.assoc x lo with
-        | Not_found -> failwith "ooof")
-  ; spill_bytes = 8 * List.length stack
+        | Not_found -> failwith ("not found uid: " ^ x))
+  ; spill_bytes = 8 * !n_spill
   }
 ;;
 
